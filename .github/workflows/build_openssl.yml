@@ -1,0 +1,171 @@
+name: build openssl
+
+on:
+  schedule:
+    - cron: "0 0 * * *"
+  workflow_dispatch:
+
+jobs:
+  check_update:
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.check.outputs.BUILD }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: check tag
+        id: check
+        run: |
+          git fetch --tags
+          tagname=$(curl -Ls https://api.github.com/repos/openssl/openssl/releases/latest | jq -r .tag_name)
+          if git tag | grep -qx "$tagname"; then
+            echo "BUILD=false" >> $GITHUB_OUTPUT
+          else
+            echo "BUILD=true" >> $GITHUB_OUTPUT
+          fi
+
+  build-arm64:
+    needs: check_update
+    if: needs.check_update.outputs.should_build == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Build ARM64
+        run: |
+          DIR=$(readlink -f .)
+          ANDROID_NDK_ROOT="$DIR/android-ndk"
+          LATEST_OPENSSL_URL=$(curl -Ls https://api.github.com/repos/openssl/openssl/releases/latest | jq -r '.assets[] | select(.name | endswith(".tar.gz")) | .browser_download_url')
+          LATEST_NDK_URL=$(curl -s https://developer.android.com/ndk/downloads | grep -oP 'https://dl.google.com/android/repository/android-ndk-r[0-9]+[a-z]?-linux\.zip' | head -n 1)
+
+          # Setup ndk
+          [ -z "$LATEST_NDK_URL" ] && LATEST_NDK_URL="https://dl.google.com/android/repository/android-ndk-r27c-linux.zip"
+          NDK_ZIP="android-ndk.zip"
+          wget "$LATEST_NDK_URL" -O "$NDK_ZIP"
+          TEMP_DIR=$(mktemp -d)
+          unzip "$NDK_ZIP" -d "$TEMP_DIR"
+          EXTRACTED_DIR=$(find "$TEMP_DIR" -maxdepth 1 -name "android-ndk-*" -type d | head -n 1)
+          mv -f "$EXTRACTED_DIR" "$ANDROID_NDK_ROOT"
+
+          # Clean up
+          rm -rf "$TEMP_DIR" "$NDK_ZIP"
+
+          # Download openssl latest stable release
+          wget "$LATEST_OPENSSL_URL" -O openssl.tar.gz
+          mkdir openssl && tar -xvf openssl.tar.gz -C openssl --strip-components=1 && rm -rf openssl.tar.gz
+
+          mkdir -p "$DIR/out/arm64-v8a"
+          cd openssl
+
+          export ANDROID_NDK_ROOT="$DIR/android-ndk"
+          PATH=$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin:$ANDROID_NDK_ROOT/toolchains/arm-linux-androideabi-4.9/prebuilt/linux-x86_64/bin:$PATH
+
+          # Compile for android arm64
+          ./Configure android-arm64 -D__ANDROID_API__=29 -DOPENSSL_NO_CONF --prefix="$DIR/out/arm64-v8a" no-shared no-module
+          make
+          make install
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: openssl-arm64
+          path: out/arm64-v8a/bin/openssl
+
+  build-arm32:
+    needs: check_update
+    if: needs.check_update.outputs.should_build == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Build ARM32
+        run: |
+          DIR=$(readlink -f .)
+          ANDROID_NDK_ROOT="$DIR/android-ndk"
+          LATEST_OPENSSL_URL=$(curl -Ls https://api.github.com/repos/openssl/openssl/releases/latest | jq -r '.assets[] | select(.name | endswith(".tar.gz")) | .browser_download_url')
+          LATEST_NDK_URL=$(curl -s https://developer.android.com/ndk/downloads | grep -oP 'https://dl.google.com/android/repository/android-ndk-r[0-9]+[a-z]?-linux\.zip' | head -n 1)
+
+          # Setup ndk
+          [ -z "$LATEST_NDK_URL" ] && LATEST_NDK_URL="https://dl.google.com/android/repository/android-ndk-r27c-linux.zip"
+          NDK_ZIP="android-ndk.zip"
+          wget "$LATEST_NDK_URL" -O "$NDK_ZIP"
+          TEMP_DIR=$(mktemp -d)
+          unzip "$NDK_ZIP" -d "$TEMP_DIR"
+          EXTRACTED_DIR=$(find "$TEMP_DIR" -maxdepth 1 -name "android-ndk-*" -type d | head -n 1)
+          mv -f "$EXTRACTED_DIR" "$ANDROID_NDK_ROOT"
+
+          # Clean up
+          rm -rf "$TEMP_DIR" "$NDK_ZIP"
+
+          # Download openssl latest stable release
+          wget "$LATEST_OPENSSL_URL" -O openssl.tar.gz
+          mkdir openssl && tar -xvf openssl.tar.gz -C openssl --strip-components=1 && rm -rf openssl.tar.gz
+
+          mkdir -p "$DIR/out/armeabi-v7a"
+          cd openssl
+
+          export ANDROID_NDK_ROOT="$DIR/android-ndk"
+          PATH=$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin:$ANDROID_NDK_ROOT/toolchains/arm-linux-androideabi-4.9/prebuilt/linux-x86_64/bin:$PATH
+
+          # Compile for android arm32
+          ./Configure android-arm -D__ANDROID_API__=29 -DOPENSSL_NO_CONF --prefix="$DIR/out/armeabi-v7a" no-shared no-module
+          make
+          make install
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: openssl-arm32
+          path: out/armeabi-v7a/bin/openssl
+
+  release:
+    needs: [build-arm64, build-arm32]
+    if: needs.check_update.outputs.should_build == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download ARM64 Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: openssl-arm64
+          path: arm64
+
+      - name: Download ARM32 Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: openssl-arm32
+          path: arm32
+
+      - name: Install UPX
+        run: sudo apt-get update && sudo apt-get install -y upx
+
+      - name: Compress Binaries
+        run: |
+          chmod +x arm64/openssl arm32/openssl
+          upx --best --lzma arm64/openssl -o arm64/openssl-arm64
+          upx --best --lzma arm32/openssl -o arm32/openssl-arm32
+          
+          # Create tar.gz archive containing both binaries
+          mkdir -p release
+          cp arm64/openssl-arm64 release/
+          cp arm32/openssl-arm32 release/
+          cd release
+          tar -czf openssl-android.tar.gz openssl-arm64 openssl-arm32
+          cd ..
+
+      - name: Get Release Tag
+        id: get_tag
+        run: |
+          echo "tag=$(curl -Ls https://api.github.com/repos/openssl/openssl/releases/latest | jq -r .tag_name)" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ steps.get_tag.outputs.tag }}
+          name: ${{ steps.get_tag.outputs.tag }}
+          body: "Static build ${{ steps.get_tag.outputs.tag }} for Android ARM32 and ARM64"
+          files: release/openssl-android.tar.gz
