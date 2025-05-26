@@ -63,8 +63,10 @@ jobs:
           PATH=$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin:$ANDROID_NDK_ROOT/toolchains/arm-linux-androideabi-4.9/prebuilt/linux-x86_64/bin:$PATH
 
           # Compile for android arm64
-          ./Configure android-arm64 -D__ANDROID_API__=29 -DOPENSSL_NO_CONF --prefix="$DIR/out/arm64-v8a" no-shared no-module
-          make
+          ./Configure android-arm64 -D__ANDROID_API__=29 -DOPENSSL_NO_CONF --prefix="$DIR/out/arm64-v8a" \
+              no-shared no-module no-autoload-config no-asm no-err no-ui-console \
+              no-dh no-dsa no-ec2m no-sm2 no-sm3 no-sm4
+          make -j$(nproc)
           make install
 
       - name: Upload Artifact
@@ -111,8 +113,10 @@ jobs:
           PATH=$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin:$ANDROID_NDK_ROOT/toolchains/arm-linux-androideabi-4.9/prebuilt/linux-x86_64/bin:$PATH
 
           # Compile for android arm32
-          ./Configure android-arm -D__ANDROID_API__=29 -DOPENSSL_NO_CONF --prefix="$DIR/out/armeabi-v7a" no-shared no-module
-          make
+          ./Configure android-arm -D__ANDROID_API__=29 -DOPENSSL_NO_CONF --prefix="$DIR/out/armeabi-v7a" \
+              no-shared no-module no-autoload-config no-asm no-err no-ui-console \
+              no-dh no-dsa no-ec2m no-sm2 no-sm3 no-sm4
+          make -j$(nproc)
           make install
 
       - name: Upload Artifact
@@ -143,14 +147,12 @@ jobs:
 
       - name: Compress Binaries
         run: |
-          chmod +x arm64/openssl arm32/openssl
-          upx --best --lzma arm64/openssl -o arm64/openssl-arm64
-          upx --best --lzma arm32/openssl -o arm32/openssl-arm32
-          
-          # Create tar.gz archive containing both binaries
           mkdir -p release
-          cp arm64/openssl-arm64 release/
-          cp arm32/openssl-arm32 release/
+          chmod +x arm64/openssl arm32/openssl
+          upx --best --lzma arm64/openssl -o release/openssl-arm64
+          upx --best --lzma arm32/openssl -o release/openssl-arm32
+
+          # Create tar.gz archive containing both binaries
           cd release
           tar -czf openssl-android.tar.gz openssl-arm64 openssl-arm32
           cd ..
