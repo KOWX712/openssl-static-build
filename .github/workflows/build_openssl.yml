@@ -5,6 +5,10 @@ on:
     - cron: "0 0 * * *"
   workflow_dispatch:
 
+env:
+  GH_TOKEN: ${{ github.token }}
+  OPENSSL_LATEST_TAG: "gh release list -R openssl/openssl --json tagName,isLatest -q '.[] | select(.isLatest) | .tagName'"
+
 jobs:
   check_update:
     runs-on: ubuntu-latest
@@ -18,8 +22,9 @@ jobs:
         id: check
         run: |
           git fetch --tags
-          tagname=$(curl -Ls https://api.github.com/repos/openssl/openssl/releases/latest | jq -r .tag_name)
-          if git tag | grep -qx "$tagname"; then
+          TAGNAME=$(${{ env.OPENSSL_LATEST_TAG }})
+          echo "openssl latest tag: $TAGNAME"
+          if git tag | grep -qx "$TAGNAME" && [[ "$TAGNAME" != "null" ]]; then
             echo "BUILD=false" >> $GITHUB_OUTPUT
           else
             echo "BUILD=true" >> $GITHUB_OUTPUT
@@ -37,7 +42,7 @@ jobs:
         run: |
           DIR=$(readlink -f .)
           ANDROID_NDK_ROOT="$DIR/android-ndk"
-          LATEST_OPENSSL_URL=$(curl -Ls https://api.github.com/repos/openssl/openssl/releases/latest | jq -r '.assets[] | select(.name | endswith(".tar.gz")) | .browser_download_url')
+          TAGNAME=$(${{ env.OPENSSL_LATEST_TAG }})
           LATEST_NDK_URL=$(curl -s https://developer.android.com/ndk/downloads | grep -oP 'https://dl.google.com/android/repository/android-ndk-r[0-9]+[a-z]?-linux\.zip' | head -n 1)
 
           # Setup ndk
@@ -53,7 +58,7 @@ jobs:
           rm -rf "$TEMP_DIR" "$NDK_ZIP"
 
           # Download openssl latest stable release
-          wget "$LATEST_OPENSSL_URL" -O openssl.tar.gz
+          gh release download -R openssl/openssl $TAGNAME -p "*.tar.gz" -O openssl.tar.gz
           mkdir openssl && tar -xvf openssl.tar.gz -C openssl --strip-components=1 && rm -rf openssl.tar.gz
 
           mkdir -p "$DIR/out/arm64-v8a"
@@ -87,7 +92,7 @@ jobs:
         run: |
           DIR=$(readlink -f .)
           ANDROID_NDK_ROOT="$DIR/android-ndk"
-          LATEST_OPENSSL_URL=$(curl -Ls https://api.github.com/repos/openssl/openssl/releases/latest | jq -r '.assets[] | select(.name | endswith(".tar.gz")) | .browser_download_url')
+          TAGNAME=$(${{ env.OPENSSL_LATEST_TAG }})
           LATEST_NDK_URL=$(curl -s https://developer.android.com/ndk/downloads | grep -oP 'https://dl.google.com/android/repository/android-ndk-r[0-9]+[a-z]?-linux\.zip' | head -n 1)
 
           # Setup ndk
@@ -103,7 +108,7 @@ jobs:
           rm -rf "$TEMP_DIR" "$NDK_ZIP"
 
           # Download openssl latest stable release
-          wget "$LATEST_OPENSSL_URL" -O openssl.tar.gz
+          gh release download -R openssl/openssl $TAGNAME -p "*.tar.gz" -O openssl.tar.gz
           mkdir openssl && tar -xvf openssl.tar.gz -C openssl --strip-components=1 && rm -rf openssl.tar.gz
 
           mkdir -p "$DIR/out/armeabi-v7a"
@@ -160,7 +165,7 @@ jobs:
       - name: Get Release Tag
         id: get_tag
         run: |
-          echo "tag=$(curl -Ls https://api.github.com/repos/openssl/openssl/releases/latest | jq -r .tag_name)" >> $GITHUB_OUTPUT
+          echo "tag=$(${{ env.OPENSSL_LATEST_TAG }})" >> $GITHUB_OUTPUT
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
